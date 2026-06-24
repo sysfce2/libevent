@@ -445,7 +445,7 @@ evtag_unmarshal_header(struct evbuffer *evbuf, ev_uint32_t *ptag)
 
 	if (decode_tag_internal(ptag, evbuf, 1 /* dodrain */) == -1)
 		return (-1);
-	if (evtag_decode_int(&len, evbuf) == -1)
+	if (evtag_decode_int(&len, evbuf) == -1 || len > INT_MAX)
 		return (-1);
 
 	if (evbuffer_get_length(evbuf) < len)
