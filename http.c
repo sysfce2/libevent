@@ -195,6 +195,10 @@ static evutil_socket_t create_bind_socket_nonblock(struct evutil_addrinfo *, int
 static evutil_socket_t bind_socket(const char *, ev_uint16_t, int reuse);
 static void name_from_addr(struct sockaddr *, ev_socklen_t, char **, char **);
 static struct evhttp_uri *evhttp_uri_parse_authority(char *source_uri, unsigned flags);
+static enum message_read_status evhttp_parse_headers_impl_(
+	struct evhttp_request *req,
+	struct evbuffer *buffer,
+	struct evkeyvalq *headers);
 static int evhttp_associate_new_request_with_connection(
 	struct evhttp_connection *evcon);
 static void evhttp_connection_start_detectclose(
@@ -1113,8 +1117,10 @@ static void
 evhttp_read_trailer(struct evhttp_connection *evcon, struct evhttp_request *req)
 {
 	struct evbuffer *buf = bufferevent_get_input(evcon->bufev);
+	struct evkeyvalq tmp_headers;
+	TAILQ_INIT(&tmp_headers);
 
-	switch (evhttp_parse_headers_(req, buf)) {
+	switch (evhttp_parse_headers_impl_(req, buf, &tmp_headers)) {
 	case DATA_CORRUPTED:
 	case DATA_TOO_LONG:
 		evhttp_connection_fail_(evcon, EVREQ_HTTP_DATA_TOO_LONG);
@@ -1128,6 +1134,8 @@ evhttp_read_trailer(struct evhttp_connection *evcon, struct evhttp_request *req)
 	default:
 		break;
 	}
+
+	evhttp_clear_headers(&tmp_headers);
 }
 
 static void
@@ -2288,14 +2296,17 @@ evhttp_append_to_last_header(struct evkeyvalq *headers, char *line)
 	return (0);
 }
 
-enum message_read_status
-evhttp_parse_headers_(struct evhttp_request *req, struct evbuffer* buffer)
+/* As `evhttp_parse_headers_`, but put any headers we find into `headers`. */
+static enum message_read_status
+evhttp_parse_headers_impl_(
+	struct evhttp_request *req,
+	struct evbuffer *buffer,
+	struct evkeyvalq *headers)
 {
 	enum message_read_status errcode = DATA_CORRUPTED;
 	char *line;
 	enum message_read_status status = MORE_DATA_EXPECTED;
 
-	struct evkeyvalq* headers = req->input_headers;
 	size_t len;
 	while ((line = evbuffer_readln(buffer, &len, EVBUFFER_EOL_CRLF))
 	       != NULL) {
@@ -2350,7 +2361,6 @@ evhttp_parse_headers_(struct evhttp_request *req, struct evbuffer* buffer)
 	mm_free(line);
 	return (errcode);
 }
-
 
 /* Return true if 'ch' is a single linear WS character (per the HTTP spec).
  * We reject CR and LF elsewhere. */
@@ -2471,6 +2481,12 @@ evhttp_validate_len_and_encoding_(struct evhttp_request *req)
 	return 0;
 }
 
+
+enum message_read_status
+evhttp_parse_headers_(struct evhttp_request *req, struct evbuffer *buffer)
+{
+	return evhttp_parse_headers_impl_(req, buffer, req->input_headers);
+}
 
 static int
 evhttp_get_body_length(struct evhttp_request *req)
